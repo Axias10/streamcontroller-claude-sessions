@@ -691,22 +691,37 @@ class ClaudeSessionsPlugin(PluginBase):
         return True
 
     @staticmethod
-    def _pct_color(pct) -> tuple:
+    def _pct_color(pct, pace=None) -> tuple:
         if pct is None:
             return (190, 190, 190, 255)
         if pct >= 90:
             return (220, 60, 50, 255)
-        if pct >= 70:
+        if pct >= (70 if pace is None else min(pace, 90)):
             return (230, 150, 0, 255)
         return (70, 190, 100, 255)
 
-    def _draw_gauge(self, draw, x, y, width, pct) -> None:
+    def _week_pace_pct(self) -> float | None:
+        """Budget linéaire de la semaine : au jour N de la fenêtre, N × 100/7 %."""
+        usage = self._usage or {}
+        reset = usage.get("week_reset")
+        if not reset:
+            return None
+        elapsed = 7 * 86400 - (reset - time.time())
+        if elapsed <= 0:
+            return None
+        day = min(7, int(elapsed // 86400) + 1)
+        return day * 100 / 7
+
+    def _draw_gauge(self, draw, x, y, width, pct, color=None, tick=None) -> None:
         draw.rounded_rectangle([x, y, x + width, y + 10], radius=5, fill=(60, 60, 60, 255))
         if pct:
             fill_w = max(10, int(width * min(pct, 100) / 100))
             draw.rounded_rectangle(
-                [x, y, x + fill_w, y + 10], radius=5, fill=self._pct_color(pct)
+                [x, y, x + fill_w, y + 10], radius=5, fill=color or self._pct_color(pct)
             )
+        if tick:
+            tx = x + int(width * min(tick, 100) / 100)
+            draw.rectangle([tx - 1, y - 3, tx + 1, y + 13], fill=(235, 235, 235, 255))
 
     def _usage_slides(self) -> list:
         """Les deux vues d'usage qui défilent l'une après l'autre."""
@@ -731,6 +746,7 @@ class ClaudeSessionsPlugin(PluginBase):
                 "title": "Semaine · tous modèles",
                 "pct": usage.get("week_pct"),
                 "reset": reset_absolute(usage["week_reset"]) if usage.get("week_reset") else "",
+                "pace": self._week_pace_pct(),
             },
         ]
 
@@ -748,7 +764,8 @@ class ClaudeSessionsPlugin(PluginBase):
         index = int(time.time() / self.market_cycle_seconds()) % len(slides)
         slide = slides[index]
 
-        signature = (index, slide["pct"], slide["reset"], self._usage is None)
+        accent = self._pct_color(slide["pct"], slide.get("pace"))
+        signature = (index, slide["pct"], slide["reset"], accent, self._usage is None)
         if signature == self._strip_signature:
             return False
         self._strip_signature = signature
@@ -766,12 +783,11 @@ class ClaudeSessionsPlugin(PluginBase):
             draw.text((28, 38), "chargement de l'usage…", font=font_small, fill=(190, 190, 190, 255))
         else:
             pct = slide["pct"]
-            accent = self._pct_color(pct)
             draw.rectangle([16, 12, 21, 88], fill=accent)
             draw.text((40, 6), slide["title"], font=font_title, fill=(255, 255, 255, 255))
             draw.text((40, 28), f"{round(pct)} %" if pct is not None else "?", font=font_big,
                       fill=accent)
-            self._draw_gauge(draw, 186, 48, 300, pct)
+            self._draw_gauge(draw, 186, 48, 300, pct, color=accent, tick=slide.get("pace"))
             if slide["reset"]:
                 draw.text((40, 76), slide["reset"], font=font_small, fill=(180, 180, 180, 255))
 
