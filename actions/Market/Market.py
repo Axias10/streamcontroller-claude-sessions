@@ -1,27 +1,17 @@
 # Import StreamController modules
 from src.backend.PluginManager.ActionBase import ActionBase
-from src.backend.DeckManagement.InputIdentifier import Input
-
-# Import python modules
-import time
-
-# Durée pendant laquelle la molette fige l'actif choisi avant de reprendre le défilement
-MANUAL_TIMEOUT = 30
 
 
-class Market(ActionBase):
-    """Tuile marché sur une molette du SD+ : cours + variation du jour.
+class MarketKey(ActionBase):
+    """Touche fixe : un actif par touche (ordre = celui de market.json).
 
-    Rotation = actif suivant/précédent, appui = détail des trois actifs sur le
-    bandeau, appui long = rafraîchissement immédiat.
+    Appui = rafraîchissement immédiat des cours. Couleur de fond = alerte
+    (vert/rouge) au franchissement du seuil, sinon neutre.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._index = 0
-        self._manual_until = 0.0
         self._last_signature = None
-        self._hidden = False
 
     def on_ready(self) -> None:
         if self not in self.plugin_base.live_market:
@@ -38,70 +28,46 @@ class Market(ActionBase):
     def on_tick(self) -> None:
         self._render()
 
-    def event_callback(self, event, data: dict = None) -> None:
-        if event in (Input.Dial.Events.TURN_CW, Input.Dial.Events.TURN_CCW):
-            assets = self.plugin_base.get_market_assets()
-            if not assets:
-                return
-            step = 1 if event == Input.Dial.Events.TURN_CW else -1
-            self._index = (self._current_index(len(assets)) + step) % len(assets)
-            self._manual_until = time.time() + MANUAL_TIMEOUT
-            self._render(force=True)
-        elif event in (
-            Input.Dial.Events.SHORT_UP,
-            Input.Dial.Events.SHORT_TOUCH_PRESS,
-            Input.Key.Events.SHORT_UP,
-        ):
-            self.plugin_base.show_market_details()
-        elif event == Input.Dial.Events.HOLD_START:
-            self.plugin_base.refresh_market_now()
+    def on_key_down(self) -> None:
+        self.plugin_base.refresh_market_now()
 
-    def set_hidden(self, hidden: bool) -> None:
-        """Masque la tuile pendant qu'un détail occupe tout le bandeau."""
-        if hidden == self._hidden:
-            return
-        self._hidden = hidden
-        self._render(force=True)
-
-    def _current_index(self, count: int) -> int:
-        if time.time() < self._manual_until:
-            return self._index % count
-        cycle = max(1, self.plugin_base.market_cycle_seconds())
-        return int(time.time() / cycle) % count
+    def _get_index(self) -> int:
+        """Déduit l'actif de la position de la touche (grille 5×3, touches 9 à 14)."""
+        try:
+            ident = self.input_ident.json_identifier
+            x, y = ident.split("x")
+            return int(x) + int(y) * 5 - 9
+        except Exception:
+            return int(self.get_settings().get("index", 0))
 
     def _render(self, force: bool = False) -> None:
-        if self._hidden:
-            if self._last_signature != "hidden" or force:
-                self._last_signature = "hidden"
-                self.set_background_color([0, 0, 0, 0], update=False)
-                self.set_media(image=None)
-            return
-
         assets = self.plugin_base.get_market_assets()
-        if not assets:
-            signature = ("empty",)
+        index = self._get_index()
+
+        if index < 0 or index >= len(assets):
+            signature = ("empty", index)
             if signature == self._last_signature and not force:
                 return
             self._last_signature = signature
-            self.set_background_color([0, 0, 0, 0], update=False)
-            self.set_media(image=self.plugin_base.render_market_tile(None, 0, 0), size=1.0)
+            self.set_background_color([20, 20, 20, 255])
+            self.set_top_label("")
+            self.set_center_label("…")
+            self.set_bottom_label("")
             return
 
-        index = self._current_index(len(assets))
         asset = assets[index]
-        signature = (
-            index,
-            asset.get("price"),
-            asset.get("pct"),
-            asset.get("alert"),
-            asset.get("stale"),
-        )
+        signature = (index, asset.get("price"), asset.get("pct"), asset.get("alert"), asset.get("stale"))
         if signature == self._last_signature and not force:
             return
         self._last_signature = signature
 
-        self.set_background_color([0, 0, 0, 0], update=False)
-        self.set_media(
-            image=self.plugin_base.render_market_tile(asset, index, len(assets)),
-            size=1.0,
-        )
+        pct = asset.get("pct")
+        stale = asset.get("stale")
+        alert = asset.get("alert")
+        color = self.plugin_base._MARKET_BG.get(alert, self.plugin_base._MARKET_BG[None])
+
+        self.set_background_color(color if not stale else self.plugin_base._MARKET_FLAT)
+        self.set_top_label(str(asset.get("label", "?"))[:10], font_size=12)
+        self.set_center_label(self.plugin_base._fmt_price(asset), font_size=13)
+        arrow = "▲" if (pct or 0) > 0 else ("▼" if (pct or 0) < 0 else "•")
+        self.set_bottom_label(f"{arrow} {self.plugin_base._fmt_pct(pct)}", font_size=11)

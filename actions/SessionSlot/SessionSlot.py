@@ -41,18 +41,16 @@ class SessionSlot(ActionBase):
         if age > STALE_AFTER:
             # Appui sur une session morte : on la retire de l'affichage
             self.plugin_base.remove_session(session.get("session_id", ""))
-            return
-        self.plugin_base.show_session_details(session)
 
     def on_tick(self) -> None:
         self._render()
 
     def _get_slot(self) -> int:
-        """Déduit le slot de la position de la touche ("XxY" -> x + y*4)."""
+        """Déduit le slot de la position de la touche ("XxY" -> x + y*5, grille 5×3)."""
         try:
             ident = self.input_ident.json_identifier
             x, y = ident.split("x")
-            return int(x) + int(y) * 4
+            return int(x) + int(y) * 5
         except Exception:
             return int(self.get_settings().get("slot", 0))
 
@@ -76,7 +74,7 @@ class SessionSlot(ActionBase):
 
         color = COLORS.get(state, COLORS["empty"])
 
-        project = session.get("project", "?")[:10]
+        project = session.get("project", "?")[:16]
 
         if age < 90:
             age_txt = f"{int(age)}s"
@@ -86,7 +84,7 @@ class SessionSlot(ActionBase):
             age_txt = f"{int(age / 3600)}h"
 
         self.set_background_color(color)
-        self.set_media(image=self.plugin_base.state_icons.get(state), size=0.5)
-        self.set_top_label(project, font_size=12)
+        self.set_media(image=self.plugin_base.state_icons.get(state), size=0.4)
+        self.set_top_label(project, font_size=10)
         self.set_center_label("")
         self.set_bottom_label(age_txt, font_size=10)
